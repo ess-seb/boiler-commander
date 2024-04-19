@@ -1,0 +1,402 @@
+#substitutions:
+#  device_name: esphome-web-05470c
+#  friendly_name: ESPHome Energy
+# buzer: GPIO8
+# photoresistor: GPIO3
+
+
+
+esphome:
+  name: esp32-servo
+  friendly_name: ESP32 Servo
+  on_boot:
+    priority: -100
+    then:
+      - rtttl.play: 'scale_up:d=32,o=5,b=100:c,c#,d#,e,f#,g#,a#,b'
+      - logger.log: "Boot Ready"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  #board: seeed_xiao_esp32c3
+  framework:
+    type: arduino
+    #type: esp-idf
+
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "MwupUZ25ZTY2sNmYwD5haB+U6qcfdpr542rPb6RsJOA="
+
+  services:
+    - service: set_servo
+      variables:
+        level: float
+      then:
+        - script.execute: 
+            id: servo_update
+            level: !lambda 'return round(level);'
+
+#globals:
+#  - id: heating_on_demend
+#    type: bool
+#    #restore_value: yes
+#    initial_value: false
+
+
+# Example configuration entry
+servo:
+  - id: my_servo
+    output: ledc_output
+    auto_detach_time: 2 s
+    transition_length: 2 s
+
+light:
+  - platform: rgb
+    id: status_led
+    name: "Status LED"
+    red: led_r
+    green: led_g
+    blue: led_b
+    default_transition_length: 1 sec
+    flash_transition_length: 500 ms
+    effects:
+      - flicker:
+          name: Flicker
+      - flicker:
+          name: Flicker turbo
+          alpha: 20%
+          intensity: 25%
+
+rtttl:
+  output: buzzer
+
+# Example output platform
+# On ESP32, use ledc output
+output:
+  - platform: ledc
+    pin: GPIO4
+    id: ledc_output
+    frequency: 50 Hz
+  - platform: ledc
+    pin: GPIO5
+    id: led_r
+    frequency: 50 Hz
+  - platform: ledc
+    pin: GPIO6
+    id: led_g
+    frequency: 50 Hz
+  - platform: ledc
+    pin: GPIO7
+    id: led_b
+    frequency: 50 Hz
+  - platform: ledc
+    pin: GPIO8
+    id: buzzer
+
+
+sensor:
+  - platform: adc
+    pin: GPIO3
+    id: photosensor
+    name: Photosensor
+    accuracy_decimals: 3
+    update_interval: 3s
+    filters:
+      - calibrate_linear:
+         method: least_squares
+         datapoints:
+          - 0.005 -> 0
+          - 0.160 -> 100    
+
+binary_sensor:
+  - platform: analog_threshold
+    name: "Heating status"
+    id: boiler_heating_status
+    sensor_id: photosensor
+    threshold: 30
+
+captive_portal:
+
+ota:
+
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "esp32-servo"
+    password: "hWiONPBP6AXk"
+
+web_server:
+  port: 80
+  auth:
+    username: 's'
+    password: 'e'
+
+number:
+  - platform: template
+    name: Servo Control
+    id: servo_control
+    min_value: -100
+    initial_value: 0
+    max_value: 100
+    step: 1
+    #internal: true
+    mode: box
+    optimistic: true
+    set_action:
+      then:
+        - script.execute: 
+            id: servo_update
+            level: !lambda 'return round(x);'
+  - platform: template
+    name: Servo Slider
+    id: servo_slider
+    min_value: -100
+    initial_value: 0
+    optimistic: true
+    max_value: 100
+    step: 1
+    mode: slider
+    set_action:
+      then:
+        - delay: 500ms
+        - select.set:
+            id: active_profile
+            option: "None"
+
+
+  - platform: template
+    name: Profile Hot
+    id: profile_hot
+    mode: box
+    min_value: -100
+    initial_value: 50
+    max_value: 100
+    step: 1
+    optimistic: true
+  - platform: template
+    name: Profile Warm
+    id: profile_warm
+    mode: box
+    min_value: -100
+    initial_value: -50
+    max_value: 100
+    step: 1
+    optimistic: true
+  - platform: template
+    name: Profile Cold
+    id: profile_cold
+    mode: box
+    min_value: -100
+    initial_value: -99
+    max_value: 100
+    step: 1
+    optimistic: true
+  
+
+select:
+  - platform: template
+    name: "Active profile"
+    id: active_profile
+    optimistic: true
+    options:
+      - None
+      - Hot
+      - Warm
+      - Cold
+    initial_option: None
+    set_action:
+      then:
+        - script.execute: 
+            id: activate_profile
+            profile: !lambda 'return x;'
+
+
+switch:
+  - platform: template
+    id: heating_on_demend_switch
+    name: Heating on demend
+    optimistic: yes
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - logger.log: "Heating on demend: ON"
+      - script.execute: 
+            id: heating_on_demend_process
+
+    on_turn_off:
+      - logger.log: "Heating on demend: OFF"
+
+
+  - platform: template
+    id: boiler_heating_status_dummy
+    name: Boiler status
+    optimistic: yes
+    restore_mode: ALWAYS_OFF
+
+
+
+button:
+  - platform: template
+    name: Servo detach
+    icon: "mdi:emoticon-outline"
+    on_press:
+      - logger.log: "Button pressed"
+      - logger.log: "Servo detached!"
+      - servo.detach: my_servo
+      - script.execute: 
+          id: blink_led
+
+
+script:
+  - id: blink_led
+    #mode: restart
+    then:
+      - light.turn_on:
+          id: status_led
+          flash_length: 500 ms
+          red: 100%
+          green: 40%
+          blue: 20%
+
+  - id: hot_status_led
+    then:
+      - light.turn_on:
+          id: status_led
+          brightness: 75%
+          red: 100%
+          green: 20%
+          blue: 10%
+          effect: "None"
+
+  - id: cold_status_led
+    then:
+      - light.turn_on:
+          id: status_led
+          brightness: 50%
+          red: 20%
+          green: 40%
+          blue: 100%
+          effect: "None"
+
+  - id: demend_status_led
+    then:
+      - light.turn_on:
+          id: status_led
+          brightness: 50%
+          red: 100%
+          green: 30%
+          blue: 10%
+          effect: Flicker turbo
+
+
+  - id: off_status_led
+    then:
+      - light.turn_off:
+          id: status_led
+  
+
+  - id: short_status_buzzer
+    then:
+      - rtttl.play: 'scale_up:d=32,o=5,b=100:c,c#,d#'
+
+  - id: activate_profile
+    parameters:
+      profile: string
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(heating_on_demend_switch).state;'
+          then:
+            - if:
+                condition:
+                  lambda: 'return profile == "Hot";'
+                then:
+                  - number.set:
+                      id: servo_control
+                      value: !lambda 'return id(profile_hot).state;'
+                  - script.execute: 
+                      id: hot_status_led
+            - if:
+                condition:
+                  lambda: 'return profile == "Warm";'
+                then:
+                  - number.set:
+                      id: servo_control
+                      value: !lambda 'return id(profile_warm).state;'
+                  - script.execute: 
+                      id: cold_status_led
+            - if:
+                condition:
+                  lambda: 'return profile == "Cold";'
+                then:
+                  - number.set:
+                      id: servo_control
+                      value: !lambda 'return id(profile_cold).state;'
+                  - script.execute: 
+                      id: cold_status_led
+            - if:
+                condition:
+                  lambda: 'return profile == "None";'
+                then:
+                  - number.set:
+                      id: servo_control
+                      value: !lambda 'return id(servo_slider).state;'
+
+
+
+
+  - id: servo_update
+    parameters:
+      level: int
+    then:
+      - servo.write:
+          id: my_servo
+          level: !lambda 'return level / 100.0;'
+      - script.execute: 
+          id: blink_led
+      - script.execute: 
+          id: short_status_buzzer
+
+
+  - id: heating_on_demend_process
+    then:
+      - number.set:
+          id: servo_control
+          value: !lambda 'return id(profile_hot).state;'
+      - script.execute: 
+          id: demend_status_led
+      - delay: 3s
+      - while:
+          condition:
+            and:
+              #- binary_sensor.is_on: boiler_heating_status
+              - switch.is_on: boiler_heating_status_dummy
+              - switch.is_on: heating_on_demend_switch
+          then:
+            - logger.log: "Heating on demend in progress!"
+            - delay: 2s
+      - if:
+          condition:
+            switch.is_on: heating_on_demend_switch
+          then:
+            # heating success 
+            - logger.log: "Heating finisshed!"
+            - rtttl.play: 'success:d=4,o=5,b=100:16e6,16e6,32p,8e6,16c6,8e6,8g6,8p'
+          else:
+            # interupted
+            - logger.log: "Heating on demend interrupted!"
+            - rtttl.play: 'interupted:d=32,o=5,b=100:a#,g#,c,e,e,e'
+      - delay: 2s
+      - switch.turn_off: heating_on_demend_switch
+      - script.execute: 
+          id: activate_profile
+          profile: !lambda ' return id(active_profile).state;'
+
+
